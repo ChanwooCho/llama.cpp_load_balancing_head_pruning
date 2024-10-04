@@ -106,7 +106,7 @@
 
 #define LLAMA_MAX_NODES   8192
 #define LLAMA_MAX_EXPERTS 160
-
+#define MODIFY_NUM_HEAAD 128
 //
 // logging
 //
@@ -3855,13 +3855,13 @@ struct llama_model_loader {
                     break;
                 }
             }
-            if (!is_ok) {
-                throw std::runtime_error(
-                        format("%s: tensor '%s' has wrong shape; expected %s, got %s",
-                            __func__, name.c_str(),
-                            llama_format_tensor_shape(ne).c_str(),
-                            llama_format_tensor_shape(cur).c_str()));
-            }
+            // if (!is_ok) {
+            //     throw std::runtime_error(
+            //             format("%s: tensor '%s' has wrong shape; expected %s, got %s",
+            //                 __func__, name.c_str(),
+            //                 llama_format_tensor_shape(ne).c_str(),
+            //                 llama_format_tensor_shape(cur).c_str()));
+            // }
         }
 
         return cur;
@@ -4400,7 +4400,7 @@ static void llm_load_hparams(
         ml.get_key(LLM_KV_ROPE_DIMENSION_COUNT, hparams.n_rot, false);
 
         if (model.arch == LLM_ARCH_LLAMA || model.arch == LLM_ARCH_FALCON) {
-            if (hparams.n_rot != hparams.n_embd / hparams.n_head) {
+            if (hparams.n_rot != hparams.n_embd / hparams.n_head / 4) {
                 throw std::runtime_error(format("invalid n_rot: %u, expected %u", hparams.n_rot, hparams.n_embd / hparams.n_head));
             }
         }
@@ -5654,17 +5654,17 @@ static bool llm_load_tensors(
             case LLM_ARCH_REFACT:
             case LLM_ARCH_MINICPM:
                 {
-                    model.tok_embd = ml.create_tensor(ctx_input, tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab});
+//                     model.tok_embd = ml.create_tensor(ctx_input, tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab});
 
-                    // output
-                    {
-                        model.output_norm = ml.create_tensor(ctx_output,       tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd});
-                        model.output = ml.create_tensor(ctx_output_split, tn(LLM_TENSOR_OUTPUT, "weight"), {n_embd, n_vocab}, llama_model_loader::TENSOR_NOT_REQUIRED);
-                        // if output is NULL, init from the input tok embed
-                        if (model.output == NULL) {
-                            model.output = ml.create_tensor(ctx_output, tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, llama_model_loader::TENSOR_DUPLICATED);
-                        }
-                    }
+//                     // output
+//                     {
+//                         model.output_norm = ml.create_tensor(ctx_output,       tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd});
+//                         model.output = ml.create_tensor(ctx_output_split, tn(LLM_TENSOR_OUTPUT, "weight"), {n_embd, n_vocab}, llama_model_loader::TENSOR_NOT_REQUIRED);
+//                         // if output is NULL, init from the input tok embed
+//                         if (model.output == NULL) {
+//                             model.output = ml.create_tensor(ctx_output, tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, llama_model_loader::TENSOR_DUPLICATED);
+//                         }
+//                     }
 
                     for (int i = 0; i < n_layer; ++i) {
                         ggml_context * ctx_layer = ctx_for_layer(i);
@@ -5674,15 +5674,15 @@ static bool llm_load_tensors(
 
                         layer.attn_norm = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd});
 
-                        layer.wq = ml.create_tensor(ctx_split, tn(LLM_TENSOR_ATTN_Q,   "weight", i), {n_embd, n_embd});
-                        layer.wk = ml.create_tensor(ctx_split, tn(LLM_TENSOR_ATTN_K,   "weight", i), {n_embd, n_embd_gqa});
-                        layer.wv = ml.create_tensor(ctx_split, tn(LLM_TENSOR_ATTN_V,   "weight", i), {n_embd, n_embd_gqa});
-                        layer.wo = ml.create_tensor(ctx_split, tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd, n_embd});
+                        layer.wq = ml.create_tensor(ctx_split, tn(LLM_TENSOR_ATTN_Q,   "weight", i), {n_embd, 128 * MODIFY_NUM_HEAAD});
+                        layer.wk = ml.create_tensor(ctx_split, tn(LLM_TENSOR_ATTN_K,   "weight", i), {n_embd, 128 * MODIFY_NUM_HEAAD});
+                        layer.wv = ml.create_tensor(ctx_split, tn(LLM_TENSOR_ATTN_V,   "weight", i), {n_embd, 128 * MODIFY_NUM_HEAAD});
+                        layer.wo = ml.create_tensor(ctx_split, tn(LLM_TENSOR_ATTN_OUT, "weight", i), {128 * MODIFY_NUM_HEAAD, n_embd});
 
                         // optional bias tensors
-                        layer.bq = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_ATTN_Q,   "bias", i), {n_embd},     llama_model_loader::TENSOR_NOT_REQUIRED);
-                        layer.bk = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_ATTN_K,   "bias", i), {n_embd_gqa}, llama_model_loader::TENSOR_NOT_REQUIRED);
-                        layer.bv = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_ATTN_V,   "bias", i), {n_embd_gqa}, llama_model_loader::TENSOR_NOT_REQUIRED);
+                        layer.bq = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_ATTN_Q,   "bias", i), {128 * MODIFY_NUM_HEAAD},     llama_model_loader::TENSOR_NOT_REQUIRED);
+                        layer.bk = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_ATTN_K,   "bias", i), {128 * MODIFY_NUM_HEAAD}, llama_model_loader::TENSOR_NOT_REQUIRED);
+                        layer.bv = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_ATTN_V,   "bias", i), {128 * MODIFY_NUM_HEAAD}, llama_model_loader::TENSOR_NOT_REQUIRED);
                         layer.bo = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_ATTN_OUT, "bias", i), {n_embd},     llama_model_loader::TENSOR_NOT_REQUIRED);
 
                         layer.ffn_norm = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd});
@@ -7687,7 +7687,7 @@ struct llm_build_context {
     const float norm_eps;
     const float norm_rms_eps;
 
-    const int32_t n_tokens;
+    int32_t n_tokens;
     const int32_t n_kv;     // size of KV cache to consider (n_kv <= kv_self.size)
     const int32_t n_outputs;
     const int32_t kv_head;  // index of where we store new KV data in the cache
@@ -8015,7 +8015,7 @@ struct llm_build_context {
         struct ggml_cgraph * gf = ggml_new_graph_custom(ctx0, LLAMA_MAX_NODES, false);
 
         // mutable variable, needed during the last layer of the computation to skip unused tokens
-        int32_t n_tokens = this->n_tokens;
+        // int32_t n_tokens = this->n_tokens; // 제거
 
         const int64_t n_embd_head = hparams.n_embd_head_v;
         GGML_ASSERT(n_embd_head == hparams.n_embd_head_k);
@@ -8023,8 +8023,11 @@ struct llm_build_context {
 
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
+        
+        n_tokens = batch.n_tokens; // 추가
+        inpL = ggml_new_tensor_4d(ctx0, GGML_TYPE_F32, hparams.n_embd, batch.n_tokens, 1, 1); // 추가
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, batch, model.tok_embd, cb);
+        // inpL = llm_build_inp_embd(ctx0, lctx, hparams, batch, model.tok_embd, cb);
 
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
@@ -8140,13 +8143,13 @@ struct llm_build_context {
 
         cur = inpL;
 
-        cur = llm_build_norm(ctx0, cur, hparams,
-                model.output_norm, NULL,
-                LLM_NORM_RMS, cb, -1);
-        cb(cur, "result_norm", -1);
+//         cur = llm_build_norm(ctx0, cur, hparams,
+//                 model.output_norm, NULL,
+//                 LLM_NORM_RMS, cb, -1);
+//         cb(cur, "result_norm", -1);
 
-        // lm_head
-        cur = ggml_mul_mat(ctx0, model.output, cur);
+//         // lm_head
+//         cur = ggml_mul_mat(ctx0, model.output, cur);
         cb(cur, "result_output", -1);
 
         ggml_build_forward_expand(gf, cur);
@@ -13143,7 +13146,7 @@ static int llama_decode_internal(
 
         ggml_backend_sched_alloc_graph(lctx.sched, gf);
 
-        llama_set_inputs(lctx, u_batch);
+        // llama_set_inputs(lctx, u_batch);
 
         llama_graph_compute(lctx, gf, n_threads);
 
@@ -13194,7 +13197,7 @@ static int llama_decode_internal(
                         if (n_outputs_new) {
                             GGML_ASSERT( n_outputs_prev + n_outputs_new <= n_outputs);
                             GGML_ASSERT((n_outputs_prev + n_outputs_new)*n_embd <= (int64_t) lctx.embd_size);
-                            ggml_backend_tensor_get_async(backend_embd, embd, embd_out, 0, n_outputs_new*n_embd*sizeof(float));
+                            // ggml_backend_tensor_get_async(backend_embd, embd, embd_out, 0, n_outputs_new*n_embd*sizeof(float));
                         }
                     } break;
                 case LLAMA_POOLING_TYPE_MEAN:
